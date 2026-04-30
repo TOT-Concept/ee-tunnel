@@ -1,0 +1,12 @@
+# Build output
+/ee-tunnel
+/ee-tunnel-*
+/dist/
+
+# Test coverage
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
