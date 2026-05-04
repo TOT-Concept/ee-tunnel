@@ -2,6 +2,7 @@
 /ee-tunnel
 /ee-tunnel-*
 /dist/
+tmp/
 
 # Test coverage
 *.out
