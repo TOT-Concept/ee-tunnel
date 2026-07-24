@@ -81,6 +81,15 @@ go build -o ee-tunnel .
 ./ee-tunnel version
 ```
 
+For an **editable install** while hacking on the CLI, symlink the build output
+onto your `PATH` so every rebuild is instantly live:
+
+```sh
+mkdir -p ~/.local/bin
+go build -o tmp/ee-tunnel .
+ln -sfn "$PWD/tmp/ee-tunnel" ~/.local/bin/ee-tunnel   # ensure ~/.local/bin is on PATH
+```
+
 ## Reporting issues
 
 https://github.com/TOT-Concept/ee-tunnel/issues
