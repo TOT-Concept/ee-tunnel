@@ -31,7 +31,7 @@ import (
 	"github.com/TOT-Concept/ee-tunnel/internal/tunnel"
 )
 
-const Version = "0.1.0"
+const Version = "1.0.0"
 
 // Run dispatches to the appropriate subcommand. Returns the process exit code.
 func Run(args []string, stdout, stderr io.Writer) int {
