@@ -30,26 +30,35 @@ The sync workflow pushes via a fine-grained PAT scoped to the public repo:
 2. In the **monorepo's** repo settings → Secrets → Actions, add a secret named
    `EE_TUNNEL_PUBLIC_REPO_TOKEN` containing that PAT.
 
-## 3. Generate the cosign keypair
+## 3. Release signing — Sigstore keyless (no setup needed)
 
-In a clean local checkout of the **public** repo:
+Releases are signed with **Sigstore keyless signing**: `release.yml` obtains a
+short-lived certificate from Fulcio bound to its GitHub OIDC workflow identity
+(`https://github.com/TOT-Concept/ee-tunnel/.github/workflows/release.yml@refs/tags/ee-tunnel-v*`),
+signs each binary, and the signature is logged in the public
+[Rekor](https://search.sigstore.dev) transparency log. Each release asset ships
+with a `.sig` + `.pem` pair, and `install.sh` / `install.ps1` verify with:
 
 ```sh
-cosign generate-key-pair
-# enter a strong passphrase when prompted
+cosign verify-blob \
+  --certificate "$ASSET.pem" \
+  --certificate-identity-regexp "^https://github\.com/TOT-Concept/ee-tunnel/\.github/workflows/release\.yml@refs/tags/ee-tunnel-v" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --signature "$ASSET.sig" "$ASSET"
 ```
 
-This creates `cosign.key` (private) and `cosign.pub` (public).
+There is **no long-lived signing key**: nothing to generate, store, rotate, or
+leak. The trust anchors are the workflow identity above and GitHub's OIDC
+issuer — which makes branch/tag protection (§4) the effective security
+perimeter of the release pipeline. Any signature minted in this repo's name is
+publicly auditable in Rekor.
 
-- Commit `cosign.pub` to the public repo. **Do not commit `cosign.key`.**
-- Also copy `cosign.pub` to the monorepo at
-  `frontend/public/ee-tunnel-cosign.pub` so `install.sh` can fetch it from
-  `https://entityenricher.ai/ee-tunnel-cosign.pub`.
-
-In the **public** repo's settings → Secrets → Actions:
-
-- `COSIGN_PRIVATE_KEY` — paste the contents of `cosign.key` as-is.
-- `COSIGN_PASSWORD` — paste the passphrase you chose.
+> **Migration note (2026-07):** the original setup used a long-lived cosign
+> keypair (`COSIGN_PRIVATE_KEY` / `COSIGN_PASSWORD` secrets in this repo,
+> pubkey served from `entityenricher.ai`). No release was ever signed with it.
+> If those secrets still exist, delete them
+> (`gh secret delete COSIGN_PRIVATE_KEY -R TOT-Concept/ee-tunnel`, same for
+> `COSIGN_PASSWORD`) and destroy any local `cosign.key` backup.
 
 ## 4. Branch protection on the public repo
 
@@ -69,7 +78,7 @@ gh workflow run "Sync ee-tunnel"
 
 (or via the **Run workflow** button in the Actions tab of the monorepo).
 
-## 6. First release
+## 6. Releases
 
 In the monorepo:
 
@@ -78,30 +87,19 @@ git tag ee-tunnel-v0.1.0
 git push origin ee-tunnel-v0.1.0
 ```
 
-The tag will be pushed to the public repo by the sync workflow, which triggers
-`release.yml` there. The release builds 5 binaries, signs each with cosign,
+The tag push triggers
+[`ee-tunnel-release-tag.yml`](../../.github/workflows/ee-tunnel-release-tag.yml)
+(monorepo root), which recomputes the deterministic subtree split of the tagged
+commit and pushes the tag onto the corresponding split commit in the public
+repo. (The regular sync workflow only pushes the branch — never tags.) That tag
+triggers `release.yml` there, which builds 5 binaries, signs each keyless (§3),
 and publishes a GitHub Release at:
 
 ```
 https://github.com/TOT-Concept/ee-tunnel/releases/tag/ee-tunnel-v0.1.0
 ```
 
-The install script at `https://entityenricher.ai/install.sh` will then pull
-from `…/releases/latest/download/…` automatically — no app redeploy needed.
-
-## Future improvement: Sigstore keyless signing
-
-The current setup uses a long-lived cosign keypair. A future v1.1 should swap
-to **Sigstore keyless signing** using GitHub OIDC. The release workflow signs
-as the workflow identity
-(`https://github.com/TOT-Concept/ee-tunnel/.github/workflows/release.yml@…`),
-and `install.sh` verifies with:
-
-```sh
-cosign verify-blob \
-  --certificate-identity-regexp "https://github.com/TOT-Concept/ee-tunnel/.github/workflows/release.yml@.*" \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --signature "$DEST.sig" "$DEST"
-```
-
-No private key to rotate, no passphrase secret to leak.
+The install script (canonically
+`https://raw.githubusercontent.com/TOT-Concept/ee-tunnel/main/install.sh`,
+aliased as `https://entityenricher.ai/install.sh` via a backend 302) pulls from
+`…/releases/latest/download/…` automatically — no app redeploy needed.

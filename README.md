@@ -42,10 +42,17 @@ your organization. Revoke instantly from the Entity Enricher UI.
 curl -fsSL https://entityenricher.ai/install.sh | sh
 ```
 
+(Windows: `iwr -useb https://entityenricher.ai/install.ps1 | iex`. Both URLs
+are 302 aliases of [`install.sh`](install.sh) / [`install.ps1`](install.ps1)
+at the root of this repo.)
+
 The installer prints what it's about to do (download URL, signature method,
-install path), pauses 5 seconds, and verifies a cosign signature before
-making the binary executable. Source `https://entityenricher.ai/install.sh`
-in `less` to audit it before running.
+install path), pauses 5 seconds, and verifies the binary's **Sigstore keyless
+signature** before making it executable: releases are signed in CI by this
+repo's `release.yml` GitHub OIDC identity and logged in the public
+[Rekor](https://search.sigstore.dev) transparency log — there is no long-lived
+signing key anywhere. Source `https://entityenricher.ai/install.sh` in `less`
+(or read [`install.sh`](install.sh) here) to audit it before running.
 
 ## Usage
 

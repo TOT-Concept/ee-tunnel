@@ -6,6 +6,10 @@ Source:   https://github.com/TOT-Concept/ee-tunnel
 License:  MIT
 Releases: https://github.com/TOT-Concept/ee-tunnel/releases
 
+This installer is also open source. The URL below is an alias of the
+canonical script in the repo:
+    https://raw.githubusercontent.com/TOT-Concept/ee-tunnel/main/install.ps1
+
 Usage:
     iwr -useb https://entityenricher.ai/install.ps1 | iex
 
@@ -32,13 +36,16 @@ $baseUrl = if ($version -eq "latest") {
 } else {
     "https://github.com/$repo/releases/download/$version"
 }
-$url    = "$baseUrl/$asset"
-$sigUrl = "$baseUrl/$asset.sig"
-$cosignPubkeyUrl = if ($env:EE_TUNNEL_COSIGN_PUBKEY_URL) {
-    $env:EE_TUNNEL_COSIGN_PUBKEY_URL
-} else {
-    "https://entityenricher.ai/ee-tunnel-cosign.pub"
-}
+$url     = "$baseUrl/$asset"
+$sigUrl  = "$baseUrl/$asset.sig"
+$certUrl = "$baseUrl/$asset.pem"
+
+# Sigstore keyless verification: releases are signed in CI by the release
+# workflow's GitHub OIDC identity and logged in the public Rekor transparency
+# log. There is no long-lived signing key anywhere — verification pins the
+# exact workflow identity below.
+$certIdentityRegexp = "^https://github\.com/TOT-Concept/ee-tunnel/\.github/workflows/release\.yml@refs/tags/ee-tunnel-v"
+$certOidcIssuer     = "https://token.actions.githubusercontent.com"
 
 # Install location: prefer %LOCALAPPDATA%\Programs\ee-tunnel; fall back to USERPROFILE.
 $destDir = Join-Path $env:LOCALAPPDATA "Programs\ee-tunnel"
@@ -52,13 +59,16 @@ Write-Host "ee-tunnel installer"
 Write-Host ""
 Write-Host "  Source     https://github.com/$repo  (MIT)"
 Write-Host "  Download   $url"
+Write-Host "  Signature  Sigstore keyless (cosign) - signed by the release workflow's"
+Write-Host "             GitHub OIDC identity, logged in the public Rekor transparency log"
 Write-Host "  Install to $dest"
 Write-Host "  Version    $version"
 Write-Host ""
-Write-Host "You can audit this script first:    iwr -useb https://entityenricher.ai/install.ps1"
-Write-Host "You can pin a version:              `$env:EE_TUNNEL_VERSION = 'v0.1.0'"
-Write-Host "You can skip the prompt in CI:      `$env:EE_TUNNEL_YES = '1'"
-Write-Host "You can skip PATH setup:            `$env:EE_TUNNEL_NO_PATH = '1'"
+Write-Host "You can audit this script first:     iwr -useb https://entityenricher.ai/install.ps1"
+Write-Host "You can pin a version:               `$env:EE_TUNNEL_VERSION = 'v0.1.0'"
+Write-Host "You can skip the prompt in CI:       `$env:EE_TUNNEL_YES = '1'"
+Write-Host "You can skip PATH setup:             `$env:EE_TUNNEL_NO_PATH = '1'"
+Write-Host "You can skip signature verification: `$env:EE_TUNNEL_SKIP_VERIFY = '1'  (not recommended)"
 Write-Host ""
 
 if (-not $env:EE_TUNNEL_YES -and [Environment]::UserInteractive) {
@@ -72,40 +82,65 @@ if (-not $env:EE_TUNNEL_YES -and [Environment]::UserInteractive) {
 
 Write-Host "Downloading..."
 $tmpBin = New-TemporaryFile
-$tmpSig = New-TemporaryFile
-$tmpPub = New-TemporaryFile
+$tmpSig = $null
+$tmpCert = $null
 try {
-    Invoke-WebRequest -Uri $url -OutFile $tmpBin -UseBasicParsing
-} catch {
-    Write-Error "Download failed: $_"
-}
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $tmpBin -UseBasicParsing
+    } catch {
+        Write-Error "Download failed: $_"
+    }
 
-# Signature verification (skip with EE_TUNNEL_SKIP_VERIFY=1).
-if (-not $env:EE_TUNNEL_SKIP_VERIFY) {
-    if (-not (Get-Command cosign -ErrorAction SilentlyContinue)) {
-        Write-Error @"
+    # Signature verification — Sigstore keyless (skip with EE_TUNNEL_SKIP_VERIFY=1).
+    # The binary's .sig + the release workflow's Fulcio certificate are verified
+    # against this repo's release.yml identity, with the entry logged in Rekor.
+    if (-not $env:EE_TUNNEL_SKIP_VERIFY) {
+        if (-not (Get-Command cosign -ErrorAction SilentlyContinue)) {
+            Write-Error @"
 cosign is required to verify the binary signature.
-  Install: https://docs.sigstore.dev/cosign/installation/
+  Install: winget install sigstore.cosign
+  Docs:    https://docs.sigstore.dev/cosign/installation/
   Bypass:  `$env:EE_TUNNEL_SKIP_VERIFY = '1'  (not recommended)
 "@
+        }
+        $tmpSig = New-TemporaryFile
+        $tmpCert = New-TemporaryFile
+        try {
+            Invoke-WebRequest -Uri $sigUrl -OutFile $tmpSig -UseBasicParsing
+            Invoke-WebRequest -Uri $certUrl -OutFile $tmpCert -UseBasicParsing
+        } catch {
+            Write-Error "Could not download signature or signing certificate: $_"
+        }
+        # Capture cosign's exit code reliably: relax ErrorActionPreference around
+        # the native call (stderr output under 'Stop' would otherwise abort or
+        # mask $LASTEXITCODE) and collect output instead of piping it away.
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $cosignOutput = & cosign verify-blob `
+            --certificate $tmpCert `
+            --certificate-identity-regexp $certIdentityRegexp `
+            --certificate-oidc-issuer $certOidcIssuer `
+            --signature $tmpSig $tmpBin 2>&1
+        $cosignExit = $LASTEXITCODE
+        $ErrorActionPreference = $prevEap
+        if ($cosignExit -ne 0) {
+            Write-Host ($cosignOutput | Out-String)
+            Write-Error @"
+Signature verification FAILED for $asset
+  The downloaded binary was not signed by the ee-tunnel release workflow
+  (or the download is partial/tampered). Aborting.
+"@
+        }
+        Write-Host "OK Signature verified (Sigstore keyless, Rekor-logged)." -ForegroundColor Green
+    } else {
+        Write-Host "WARN EE_TUNNEL_SKIP_VERIFY=1 set - proceeding without signature check." -ForegroundColor Yellow
     }
-    try {
-        Invoke-WebRequest -Uri $sigUrl -OutFile $tmpSig -UseBasicParsing
-        Invoke-WebRequest -Uri $cosignPubkeyUrl -OutFile $tmpPub -UseBasicParsing
-    } catch {
-        Write-Error "Could not download signature or pubkey: $_"
-    }
-    & cosign verify-blob --key $tmpPub --signature $tmpSig $tmpBin | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "Signature verification FAILED for $asset"
-    }
-    Write-Host "OK Signature verified." -ForegroundColor Green
-} else {
-    Write-Host "WARN EE_TUNNEL_SKIP_VERIFY=1 set - proceeding without signature check." -ForegroundColor Yellow
-}
 
-Move-Item -Force $tmpBin $dest
-Remove-Item -Force $tmpSig, $tmpPub -ErrorAction SilentlyContinue
+    Move-Item -Force $tmpBin $dest
+} finally {
+    Remove-Item -Force $tmpSig, $tmpCert -ErrorAction SilentlyContinue
+    if (Test-Path $tmpBin) { Remove-Item -Force $tmpBin -ErrorAction SilentlyContinue }
+}
 
 Write-Host "OK Installed ee-tunnel to $dest" -ForegroundColor Green
 Write-Host ""
