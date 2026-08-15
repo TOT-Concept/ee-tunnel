@@ -17,11 +17,17 @@ import (
 	"github.com/TOT-Concept/ee-tunnel/internal/framing"
 )
 
+// Version is the single source of truth for the CLI version, feeding both the
+// CLI banners and the wire agent identity below.
+const Version = "1.0.0"
+
+// Agent identifies this client in User-Agent and hello frames.
+const Agent = "ee-tunnel/" + Version
+
 const (
-	agentName       = "ee-tunnel/0.1.0"
-	maxFrameSize    = 64 * 1024 * 1024 // must accept large response chunks for big bodies
-	pingInterval    = 30 * time.Second
-	dialTimeout     = 15 * time.Second
+	maxFrameSize = 64 * 1024 * 1024 // must accept large response chunks for big bodies
+	pingInterval = 30 * time.Second
+	dialTimeout  = 15 * time.Second
 )
 
 // Conn wraps a single connected WebSocket. Callers send frames via Send() and
@@ -41,7 +47,7 @@ func Dial(ctx context.Context, wsURL, accessToken string, logger *log.Logger) (*
 
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+accessToken)
-	headers.Set("User-Agent", agentName)
+	headers.Set("User-Agent", Agent)
 
 	ws, _, err := websocket.Dial(dialCtx, wsURL, &websocket.DialOptions{
 		HTTPHeader: headers,
@@ -55,7 +61,7 @@ func Dial(ctx context.Context, wsURL, accessToken string, logger *log.Logger) (*
 
 	hello := framing.Hello{
 		Version: framing.ProtocolVersion,
-		Agent:   agentName,
+		Agent:   Agent,
 		OS:      runtime.GOOS,
 		Arch:    runtime.GOARCH,
 	}

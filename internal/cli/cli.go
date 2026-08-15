@@ -31,7 +31,9 @@ import (
 	"github.com/TOT-Concept/ee-tunnel/internal/tunnel"
 )
 
-const Version = "1.0.0"
+// Version aliases the tunnel package's constant (single source of truth, so the
+// hello-frame agent string can never drift from the CLI banner again).
+const Version = tunnel.Version
 
 // Run dispatches to the appropriate subcommand. Returns the process exit code.
 func Run(args []string, stdout, stderr io.Writer) int {
